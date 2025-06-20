@@ -12,6 +12,15 @@ contract LendingPool is ReentrancyGuard {
         uint interestIndex;
     }
 
+    struct PoolSnapshot {
+        uint totalLiquidity;      // Güncel toplam likidite (faiz dahil)
+        uint totalBorrows;       // Güncel toplam borç (faiz dahil)
+        uint exchangeRate;       // Güncel exchange rate
+        uint borrowRate;         // Güncel borç alma oranı
+        uint borrowIndex;        // Güncel borç endeksi
+        uint accruedInterest;    // Biriken faiz miktarı
+    }
+
     // Token-specific storage
     mapping(address => mapping(address => uint)) public deposits; // user => token => amount
     mapping(address => uint) public totalDepositsPerToken;       // token => total supply
@@ -120,6 +129,35 @@ contract LendingPool is ReentrancyGuard {
         totalBorrowsPerToken[token] -= principal;
         
         emit Repaid(msg.sender, token, amount);
+    }
+
+    function getPoolSnapshot(address token) public view returns (PoolSnapshot memory) {
+        PoolSnapshot memory snapshot;
+        snapshot.totalLiquidity = totalLiquidity[token];
+        snapshot.totalBorrows = totalBorrowsPerToken[token];
+        snapshot.exchangeRate = _getExchangeRate(token);
+        snapshot.borrowIndex = _getBorrowIndex(token);
+        
+        uint currentTimestamp = block.timestamp;
+        uint deltaTime = currentTimestamp - lastUpdateTimestamp;
+        
+        if (deltaTime > 0 && totalBorrowsPerToken[token] > 0) {
+            uint utilizationRate = (totalBorrowsPerToken[token] * 1e18) / totalLiquidity[token];
+            snapshot.borrowRate = interestRateModel.getBorrowRateExternal(utilizationRate);
+            snapshot.accruedInterest = (totalBorrowsPerToken[token] * snapshot.borrowRate * deltaTime) / (SECONDS_PER_YEAR * 1e18);
+            
+            uint reserves = (snapshot.accruedInterest * reserveFactor[token]) / 100;
+            uint lendersInterest = snapshot.accruedInterest - reserves;
+            
+            snapshot.totalBorrows += snapshot.accruedInterest;
+            snapshot.totalLiquidity += lendersInterest;
+            snapshot.exchangeRate = (snapshot.totalLiquidity * 1e18) / aTokens[token].totalSupply();
+        } else {
+            snapshot.borrowRate = 0;
+            snapshot.accruedInterest = 0;
+        }
+        
+        return snapshot;
     }
 
     function _accrueInterest(address token) internal {
