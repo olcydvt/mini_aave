@@ -1,59 +1,37 @@
-// scripts/deploy.js
 const hre = require("hardhat");
 
 async function main() {
-  const { deploy } = hre.deployments;
   const [deployer] = await hre.ethers.getSigners();
-
   console.log("Deploying contracts with account:", deployer.address);
 
-  // 1. Deploy Mock WETH (with explicit tags)
-  const weth = await deploy("MockERC20", {
-    from: deployer.address,
-    args: ["Wrapped Ether", "WETH"],
-    log: true,
-    tags: ["tokens", "all"], // Tagged for token group
-  });
+  const MockToken = await hre.ethers.getContractFactory("MockERC20");
+  const mockToken = await MockToken.deploy("MockERC20", "MockERC20");
+  await mockToken.waitForDeployment();
+  console.log("MockERC20 deployed to:", await mockToken.getAddress());
 
-  // 2. Deploy Mock USDC
-  const usdc = await deploy("MockERC20", {
-    from: deployer.address,
-    args: ["USD Coin", "USDC"],
-    log: true,
-    tags: ["tokens", "all"], 
-  });
+  const InterestRateModel = await hre.ethers.getContractFactory("InterestRateModel");
+  const interestRateModel = await InterestRateModel.deploy();
+  await interestRateModel.waitForDeployment();
+  console.log("InterestRateModel deployed to:", await interestRateModel.getAddress());
 
-  // 3. Deploy LendingPool (with token addresses if needed)
-  const lendingPool = await deploy("LendingPool", {
-    from: deployer.address,
-    args: [], // Add [weth.address, usdc.address] if constructor requires
-    log: true,
-    waitConfirmations: 2, // Wait for 2 confirmations on live nets
-    tags: ["lending", "all"], // Tagged for lending group
-  });
+  const LendingPool = await hre.ethers.getContractFactory("LendingPool");
+  const lendingPool = await LendingPool.deploy(await interestRateModel.getAddress());
+  await lendingPool.waitForDeployment();
+  console.log("LendingPool deployed to:", await lendingPool.getAddress());
 
-  console.log("\nDeployment Summary:");
-  console.log("WETH deployed to:", weth.address);
-  console.log("USDC deployed to:", usdc.address);
-  console.log("LendingPool deployed to:", lendingPool.address);
-
-  // 4. Optional: Verify on Etherscan
-  if (hre.network.name !== "hardhat") {
-    try {
-      await hre.run("verify:verify", {
-        address: lendingPool.address,
-        constructorArguments: [],
-      });
-    } catch (e) {
-      console.log("Verification failed (might already be verified):", e.message);
-    }
-  }
+  const addresses = {
+    MockERC20: await mockToken.getAddress(),
+    InterestRateModel: await interestRateModel.getAddress(),
+    LendingPool: await lendingPool.getAddress(),
+  };
+  console.log("Deployed addresses:", JSON.stringify(addresses, null, 2));
 }
 
-// Global tags (for backward compatibility)
-main.tags = ["all"];
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 
-module.exports = main;
-
-//yarn hardhat deploy --tags tokens --network sepolia
-//yarn hardhat deploy --tags lending --network sepolia
+// ### Usage
+//   yarn hardhat node
+//   yarn hardhat run scripts/deploy.js --network hardhat
